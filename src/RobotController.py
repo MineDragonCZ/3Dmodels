@@ -18,6 +18,7 @@ class RobotController:
         # Initialize the serial connection
         self.serial_connection = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
         time.sleep(2)  # Wait for the connection to establish
+        # self.send_gcode("M17")
 
     def send_gcode(self, gcode):
         """
@@ -69,8 +70,10 @@ class RobotController:
         """
         Sends a G-code command to home the robot (move to the origin).
         """
-        self.send_gcode("G28")  # G28 is commonly used to home axes
-
+        # self.send_gcode("G28")  # G28 is commonly used to home axes
+        self.send_gcode("G01 Z0 F10")
+        self.send_gcode("G01 X130 Z25 F10")
+        # self.send_gcode("M2019")
     def set_speed(self, feedrate):
         """
         Sets the robot's movement speed (feedrate).

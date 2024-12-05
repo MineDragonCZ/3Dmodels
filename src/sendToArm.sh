@@ -19,10 +19,12 @@ else
     exit 1
 fi
 
-# SSH into remote and execute commands
+# SSH into remote and execute commands, keeping the session open
 echo "Connecting to $REMOTE_USER@$REMOTE_HOST..."
-ssh "$REMOTE_USER@$REMOTE_HOST" << EOF
-    cd $REMOTE_PROJECT_DIR
-    echo "Running Main.py..."
-    $REMOTE_COMMAND
-EOF
+ssh -t "$REMOTE_USER@$REMOTE_HOST" "
+    sudo killall python ;
+    cd $REMOTE_PROJECT_DIR && \
+    echo 'Running Main.py...' && \
+    $REMOTE_COMMAND; \
+    bash --login
+"

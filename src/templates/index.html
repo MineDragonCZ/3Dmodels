@@ -9,11 +9,21 @@
 </head>
 <body>
     <div class="container bg-light text-center">
-        <h2>Upload DXF File</h2>
-        <form action="/upload" method="post" enctype="multipart/form-data">
-            <input type="file" class="form-control" name="file" required>
-            <button type="submit">Upload</button>
-        </form>
+        <div class="row align-items-center justify-content-center h-100" style="min-height: 100dvh">
+            <div class="col-auto">
+                <h2>Upload DXF File to print</h2>
+                <form action="/upload" method="post" enctype="multipart/form-data">
+                    <input type="file" class="form-control mt-3" name="file" required>
+                    <input type="number" class="form-control mx-3" name="size" required placeholder="Size in mm">
+                    <button type="submit" class="btn btn-primary">Calibrate and print</button>
+                </form>
+                <h2 class="pt-3">Manual</h2>
+                <form action="/command" method="post" enctype="multipart/form-data">
+                    <textarea name="command" placeholder="Command" rows="15" class="form-control mx-3"></textarea>
+                    <button type="submit" class="btn btn-primary">Send</button>
+                </form>
+            </div>
+        </div>
     </div>
 
 

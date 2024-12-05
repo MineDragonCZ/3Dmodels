@@ -3,6 +3,7 @@ import time
 
 
 class RobotController:
+    writing_z = 0.0
     def __init__(self, port, baudrate=115200, timeout=1):
         """
         Initializes the RobotController with a serial connection.
@@ -38,12 +39,13 @@ class RobotController:
         response = ""
         while True:
             response = self.read_response()
-            if response and response == "ok":
+            if response and response.startswith("ok"):
                 break
             elif response:
                 print(f"Received error: {response}")
             time.sleep(0.1)
         print(f"Received: {response}")
+        return response
 
     def read_response(self):
         """
@@ -90,4 +92,27 @@ class RobotController:
         if self.serial_connection.is_open:
             self.serial_connection.close()
             print("Serial connection closed.")
+
+    def set_writing_z(self):
+        response = self.send_gcode("P2220").strip()
+        parts = response.split("Z")
+        if len(parts) < 2:
+            return False
+        self.writing_z = float(parts[1]) - 0.1
+        return True
+
+    def pen_up(self):
+        self.send_gcode(f"G01 Z{self.writing_z + 10}")
+
+    def pen_down(self, z_offset):
+        self.send_gcode(f"G01 Z{self.writing_z + z_offset}")
+
+    def calibrate(self):
+        self.send_gcode("G01 X180 Y0 Z20 F10")
+        self.send_gcode("M2019")
+        time.sleep(2)
+        self.set_writing_z()
+        time.sleep(2)
+        self.send_gcode("M17")
+
 

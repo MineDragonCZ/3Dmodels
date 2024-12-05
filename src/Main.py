@@ -1,5 +1,8 @@
+import math
 import os
-from flask import Flask, request, render_template
+import time
+
+from flask import Flask, request, render_template, redirect
 
 from RobotController import RobotController
 
@@ -31,12 +34,14 @@ def initDXF(filename):
     return DXFtxt
 
 
-def sendToSerial(shapes, originX=0, originY=0, originZ=0, writingZ=-26, fastFeed=100, slowFeed=10):
+def sendToSerial(shapes, originX=0, originY=0, originZ=0, fastFeed=100, slowFeed=10):
 
     # G21: Units in millimetres
     # G90: Absolute distances
     controller.send_gcode("G21")
     controller.send_gcode("G90")
+
+    controller.calibrate()
 
     controller.send_gcode(f"G00 X{originX} Y{originY} Z{originZ} F{fastFeed}")
 
@@ -45,25 +50,31 @@ def sendToSerial(shapes, originX=0, originY=0, originZ=0, writingZ=-26, fastFeed
     # Assume Z0 is down and cutting and Z1 is retracted up
     for shape in shapes:
         for i in range(len(shape)):
-            xstr = "{:.3f}".format(round(originX + shape[i][0], 3))
-            ystr = "{:.3f}".format(round(originY + shape[i][1], 3))
+            x = originX + shape[i][0]
+            y = originY + shape[i][1]
+            z_offset = 0 # math.sqrt(math.pow(x - originX, 2) + math.pow(y - originY, 2)) / 500.0 - 0.1
+            xstr = "{:.3f}".format(round(x, 3))
+            ystr = "{:.3f}".format(round(y, 3))
 
             # Write coordinate to file
             controller.send_gcode(f"G01 X{xstr} Y{ystr} F{slowFeed}")
 
             # When arrived at point of new shape, start cutting
             if up:
-                controller.send_gcode(f"G01 Z{writingZ} F{slowFeed}")
+                controller.pen_down(z_offset)
+                # controller.send_gcode(f"G01 Z{writingZ} F{slowFeed}")
                 up = False
         # When finished shape, retract cutter
-        controller.send_gcode(f"G00 Z{originZ} F{fastFeed}")
+        controller.pen_up()
+        # controller.send_gcode(f"G00 Z{originZ} F{fastFeed}")
         up = True
     # Return to origin (0, 0) when done, then end program with M2
     controller.send_gcode(f"G00 Z{originZ} F{fastFeed}")
     controller.send_gcode(f"G00 X{originX} Y{originY} F{fastFeed}")
+    controller.send_gcode("M2210 F800 T500")
 
 
-def readFromDXF(DXFtxt):
+def readFromDXF(DXFtxt, size=50.0):
     # Create Image object from file in local folder
 
     segment = -1
@@ -138,12 +149,12 @@ def readFromDXF(DXFtxt):
         line += 1
 
     # Rescale the coordinates to imdim x imdim
-    scale(path)
+    scale(path, size)
 
     return path
 
 
-def scale(path):
+def scale(path, size):
     '''
     DXF files have the coordinates prewritten into it, which means they may
     be the wrong dimension. Scale the coordinates read from the DXF to IMDIM.
@@ -152,8 +163,6 @@ def scale(path):
         path is of type list. Contains sublists of tuples, where each tuple is
                               an (x, y) coordinate.
     '''
-
-    IMDIM = 50
 
     # Create lists of only x coordinates and only y coordinates
     x = []
@@ -175,7 +184,7 @@ def scale(path):
     # assumed size is the maximal coordinate plus the margin
     margin = min(minx, miny)
     size = max(maxx, maxy) + margin
-    scale = IMDIM / size  # original
+    scale = size / size  # original
 
     # Once the old size is known, scale the coordinates
     for i in range(len(path)):
@@ -202,6 +211,7 @@ def upload_file():
         return "No file part", 400
 
     file = request.files['file']
+    size = float(request.form.get("size"))
     if file.filename == '':
         return "No selected file", 400
 
@@ -210,16 +220,25 @@ def upload_file():
         lines = file.stream.readlines()
         if len(lines) <= 0:
             return "lines < 1"
-        paths = readFromDXF(lines)
-        sendToSerial(paths, originX=150, originY=50, originZ=3, writingZ=1, fastFeed=500, slowFeed=100)
-        return f"File printed"
+        lines = [line.decode('utf-8').strip() + "\n" for line in lines]
+        paths = readFromDXF(lines, size)
+        sendToSerial(paths, originX=150, originY=50, originZ=10, fastFeed=500, slowFeed=100)
+        return redirect("/?m=File printed!")
     else:
         return "Invalid file type. Only DXF files are allowed.", 400
 
 
+@app.route('/command', methods=['POST'])
+def send_command():
+    cmd = request.form.get("command")
+    for line in cmd.split("\n"):
+        controller.send_gcode(line)
+    return redirect("/")
+
+
 if __name__ == '__main__':
-    lines = initDXF(get_file_path("./peveko.dxf"))
-    paths = readFromDXF(lines)
-    sendToSerial(paths, originX=150, originY=50, originZ=3, writingZ=1, fastFeed=500, slowFeed=100)
-    # app.run(debug=True, host="0.0.0.0")
-    controller.home()
+    # lines = initDXF(get_file_path("./peveko.dxf"))
+    # paths = readFromDXF(lines)
+    # sendToSerial(paths, originX=150, originY=50, originZ=3, writingZ=1, fastFeed=500, slowFeed=100)
+    app.run(debug=True, host="0.0.0.0")
+    # controller.home()

@@ -34,9 +34,15 @@ class RobotController:
         print(f"Sent: {gcode}")
 
         # Optionally, read the response (if the robot sends anything back)
-        response = self.read_response()
-        if response:
-            print(f"Received: {response}")
+        response = ""
+        while True:
+            response = self.read_response()
+            if response and response == "ok":
+                break
+            elif response:
+                print(f"Received error: {response}")
+            time.sleep(0.1)
+        print(f"Received: {response}")
 
     def read_response(self):
         """

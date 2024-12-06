@@ -52,7 +52,7 @@ def sendToSerial(shapes, originX=0, originY=0, originZ=0, fastFeed=100, slowFeed
         for i in range(len(shape)):
             x = originX + shape[i][0]
             y = originY + shape[i][1]
-            z_offset = 0 # math.sqrt(math.pow(x - originX, 2) + math.pow(y - originY, 2)) / 500.0 - 0.1
+            z_offset = -0.1 # math.sqrt(math.pow(x - originX, 2) + math.pow(y - originY, 2)) / 500.0 - 0.1
             xstr = "{:.3f}".format(round(x, 3))
             ystr = "{:.3f}".format(round(y, 3))
 
@@ -154,7 +154,7 @@ def readFromDXF(DXFtxt, size=50.0):
     return path
 
 
-def scale(path, size):
+def scale(path, custom_size):
     '''
     DXF files have the coordinates prewritten into it, which means they may
     be the wrong dimension. Scale the coordinates read from the DXF to IMDIM.
@@ -184,7 +184,7 @@ def scale(path, size):
     # assumed size is the maximal coordinate plus the margin
     margin = min(minx, miny)
     size = max(maxx, maxy) + margin
-    scale = size / size  # original
+    scale = custom_size / size  # original
 
     # Once the old size is known, scale the coordinates
     for i in range(len(path)):
@@ -222,7 +222,7 @@ def upload_file():
             return "lines < 1"
         lines = [line.decode('utf-8').strip() + "\n" for line in lines]
         paths = readFromDXF(lines, size)
-        sendToSerial(paths, originX=150, originY=50, originZ=10, fastFeed=500, slowFeed=100)
+        sendToSerial(paths, originX=200, originY=0, originZ=10, fastFeed=500, slowFeed=100)
         return redirect("/?m=File printed!")
     else:
         return "Invalid file type. Only DXF files are allowed.", 400

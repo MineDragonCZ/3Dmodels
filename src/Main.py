@@ -222,7 +222,7 @@ def upload_file():
             return "lines < 1"
         lines = [line.decode('utf-8').strip() + "\n" for line in lines]
         paths = readFromDXF(lines, size)
-        sendToSerial(paths, originX=200, originY=0, originZ=10, fastFeed=500, slowFeed=100)
+        sendToSerial(paths, originX=200, originY=0, originZ=20, fastFeed=500, slowFeed=100)
         return redirect("/?m=File printed!")
     else:
         return "Invalid file type. Only DXF files are allowed.", 400

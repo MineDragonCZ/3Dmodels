@@ -101,6 +101,32 @@ class RobotController:
         self.writing_z = float(parts[1]) - 0.1
         return True
 
+    def get_current_z(self):
+        response = self.send_gcode("P2220").strip()
+        parts = response.split("Z")
+        return float(parts[1])
+
+    def get_current_y(self):
+        response = self.send_gcode("P2220").strip()
+        parts = response.split("Y")
+        return float(parts[1].split(" ")[0])
+
+    def get_current_x(self):
+        response = self.send_gcode("P2220").strip()
+        parts = response.split("X")
+        return float(parts[1].split(" ")[0])
+
+    def get_current_all(self):
+        response = self.send_gcode("P2220").strip()
+        partsX = response.split("X")
+        partsY = response.split("Y")
+        partsZ = response.split("Z")
+        return [
+            float(partsX[1].split(" ")[0]),
+            float(partsY[1].split(" ")[0]),
+            float(partsZ[1])
+        ]
+
     def pen_up(self):
         self.send_gcode(f"G01 Z{self.writing_z + 10}")
 
@@ -108,7 +134,7 @@ class RobotController:
         self.send_gcode(f"G01 Z{self.writing_z + z_offset}")
 
     def calibrate(self):
-        self.send_gcode("G01 X180 Y0 Z20 F10")
+        self.send_gcode("G01 X220 Y0 Z20 F10")
         self.send_gcode("M2019")
         time.sleep(2)
         self.set_writing_z()

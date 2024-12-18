@@ -3,30 +3,151 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Upload DXF File</title>
+    <title>uArm Web Interface</title>
 
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/@sweetalert2/theme-dark@4/dark.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 </head>
-<body>
-    <div class="container bg-light text-center">
-        <div class="row align-items-center justify-content-center h-100" style="min-height: 100dvh">
-            <div class="col-auto">
-                <h2>Upload DXF File to print</h2>
-                <form action="/upload" method="post" enctype="multipart/form-data">
-                    <input type="file" class="form-control mt-3" name="file" required>
-                    <input type="number" class="form-control mx-3" name="size" required placeholder="Size in mm">
-                    <button type="submit" class="btn btn-primary">Calibrate and print</button>
-                </form>
-                <h2 class="pt-3">Manual</h2>
-                <form action="/command" method="post" enctype="multipart/form-data">
-                    <textarea name="command" placeholder="Command" rows="15" class="form-control mx-3"></textarea>
-                    <button type="submit" class="btn btn-primary">Send</button>
-                </form>
+<body data-bs-theme="dark">
+
+    <div class="container">
+        <div class="row align-items-center justify-content-center" style="min-height: 100dvh">
+            <div class="col">
+                <div class="text-center mb-5">
+                    <h1>uArm Web Interface</h1>
+                </div>
+                <div class="row">
+                    <div class="col-6">
+                        <div class="card p-3 mb-4">
+                            <div class="card-body">
+                                <div class="card-title"><h2>Port setup</h2></div>
+                                <div class="card-text">
+                                    Port:
+                                    <select id="comSelect" onchange="setCom();" class="form-select">
+                                        <option value="">Select...</option>
+                                    </select>
+                                    Port status:
+                                    <div id="portStatus">Disconnected!</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card p-3">
+                            <div class="card-body">
+                                <div class="card-title"><h2>File drawing</h2></div>
+                                <div class="card-text text-center">
+                                    <form onsubmit="uploadFile(); return false;" id="fileForm">
+                                        <input type="file" name="file" class="form-control mb-2">
+                                        <input type="number" min="20" max="200" step="1" name="size" class="form-control mb-2" placeholder="Size (mm)">
+                                        <button type="submit" class="btn btn-secondary">Outline drawing</button>
+                                        <button type="submit" class="btn btn-primary">Start drawing</button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="card p-3 h-100">
+                            <div class="card-body">
+                                <div class="card-title"><h2>uArm status</h2></div>
+                                <div class="card-text text-center">
+                                    Progress: <span id="progress">0%</span>
+                                    <div class="bg-secondary"><div id="progressBar" class="bg-info"></div></div>
+                                </div>
+                                <div class="text-center mt-3">
+                                    <div class="btn btn-danger" onclick="stopDrawing();">Stop drawing</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
-
+    <style>
+        #progressBar {
+            height: 5px;
+            width: 0px;
+        }
+    </style>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const endpoint = "/api/";
+
+        async function uploadFile(){
+            var r = await fetch(endpoint + "upload", {
+                method: "POST",
+                body: new FormData(document.getElementById("fileForm"))
+            });
+            var response = await r.text();
+            if(r.status == 200){
+                alertSuccess("Drawing started...", "Your drawing is under construction :)");
+                return;
+            }
+            alertError("Error!", response);
+        }
+        async function getStatus(){
+            var r = await fetch(endpoint + "getstatus");
+            var value = await r.json();
+            $("#progress").html(value["percentage"] + "% (" + value["time"] + ")");
+            $("#progressBar").width(parseFloat(value["percentage"]) + "%");
+        }
+        async function setCom(){
+            var value = $("#comSelect").val();
+            $("#portStatus").html("Connecting...");
+            var r = await fetch(endpoint + "setport", {
+                method: "POST",
+                body: JSON.stringify({
+                    port: value
+                }),
+                headers: {
+                    "Content-type": "application/json; charset=UTF-8"
+                }
+            });
+            var response = await r.text();
+            $("#portStatus").html(response);
+        }
+        async function getComs(){
+            var r = await fetch(endpoint + "getports");
+            var json = await r.json();
+            for(let i = 0; i < json.length; i++){
+                var element = json[i];
+                $("#comSelect").html($("#comSelect").html() + `<option value="${element}">${element}</option>`);
+            };
+        }
+        async function stopDrawing(){
+            var r = await fetch(endpoint + "stopdrawing");
+            var response = await r.text();
+            if(r.status == 200){
+                alertSuccess("Drawing stopped!", "");
+                return;
+            }
+            alertError("Error!", response);
+        }
+
+
+        getComs();
+        setInterval(getStatus, 1000);
+
+        function alertSuccess(t, mess){
+            Swal.fire({
+                title: t,
+                text: mess,
+                icon: 'success',
+                confirmButtonText: 'Close'
+            });
+        }
+
+        function alertError(t, mess){
+            Swal.fire({
+                title: t,
+                text: mess,
+                icon: 'error',
+                confirmButtonText: 'Close'
+            });
+        }
+    </script>
 </body>
 </html>

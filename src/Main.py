@@ -1,13 +1,16 @@
-import math
+import glob
+import json
 import os
-import time
+import sys
+from datetime import datetime, timedelta
+from threading import Thread
 
-from flask import Flask, request, render_template, redirect
+import serial
+from flask import Flask, request, render_template
 
 from RobotController import RobotController
 
-
-controller = RobotController("/dev/ttyACM0")
+controller: (RobotController | None) = None
 
 
 def get_file_path(file_name):
@@ -16,14 +19,6 @@ def get_file_path(file_name):
 
 
 def initDXF(filename):
-    '''
-    Return the DXF text file represented by the file name. The file must be
-    in the local folder.
-
-    Arguments:
-        filename is of type string. Contains name of image file.
-    '''
-
     file = open(filename)
 
     # Since dxf is a fancy extension for a text file, it can be read as a string
@@ -34,30 +29,88 @@ def initDXF(filename):
     return DXFtxt
 
 
-def sendToSerial(shapes, originX=0, originY=0, originZ=0, fastFeed=100, slowFeed=10):
+stop_drawing: bool = False
+is_drawing: bool = False
+drawing_status: float = 0
+drawing_status_time_left: str = ""
+drawing_start: datetime|None = None
 
+
+def estimate_time_to_finish():
+    global drawing_start
+    global drawing_status
+    if drawing_start is None:
+        return timedelta()
+
+    if drawing_status <= 0:
+        return timedelta()
+
+    # Calculate elapsed time
+    current_time = datetime.now()
+    elapsed_time = current_time - drawing_start
+
+    # Calculate remaining time
+    remaining_ratio = (100 - (drawing_status * 100)) / (drawing_status * 100)
+    estimated_remaining_time = elapsed_time * remaining_ratio
+
+    return estimated_remaining_time
+
+
+def sendToSerial(shapes, fastFeed=100, slowFeed=10):
+    if controller is None:
+        return
+    global stop_drawing
+    global is_drawing
+    global drawing_status
+    global drawing_status_time_left
+    global drawing_start
+    is_drawing = True
     # G21: Units in millimetres
     # G90: Absolute distances
     controller.send_gcode("G21")
     controller.send_gcode("G90")
 
-    controller.calibrate()
+    # controller.calibrate()
 
-    controller.send_gcode(f"G00 X{originX} Y{originY} Z{originZ} F{fastFeed}")
+    current_pos = controller.get_current_all()
+    originX = current_pos[0]
+    originY = current_pos[1]
+    writingZ = current_pos[2]
+    controller.writing_z = writingZ
+
+    controller.send_gcode(f"M17")
+    controller.send_gcode(f"G01 X{originX} Y{originY} Z{writingZ + 30} F{slowFeed}")
 
     up = True
 
-    # Assume Z0 is down and cutting and Z1 is retracted up
+    total_points = 0
     for shape in shapes:
         for i in range(len(shape)):
+            total_points += 1
+    if total_points == 0:
+        total_points = 1
+    drawing_start = datetime.now()
+
+    current_point = 0
+    for shape in shapes:
+        if stop_drawing:
+            controller.pen_up()
+            break
+        for i in range(len(shape)):
+            current_point += 1
+            if stop_drawing:
+                controller.pen_up()
+                break
             x = originX + shape[i][0]
             y = originY + shape[i][1]
-            z_offset = -0.1 # math.sqrt(math.pow(x - originX, 2) + math.pow(y - originY, 2)) / 500.0 - 0.1
+            z_offset = -0.1  # math.sqrt(math.pow(x - originX, 2) + math.pow(y - originY, 2)) / 500.0 - 0.1
             xstr = "{:.3f}".format(round(x, 3))
             ystr = "{:.3f}".format(round(y, 3))
 
             # Write coordinate to file
             controller.send_gcode(f"G01 X{xstr} Y{ystr} F{slowFeed}")
+            drawing_status = current_point / total_points
+            drawing_status_time_left = estimate_time_to_finish()
 
             # When arrived at point of new shape, start cutting
             if up:
@@ -69,9 +122,15 @@ def sendToSerial(shapes, originX=0, originY=0, originZ=0, fastFeed=100, slowFeed
         # controller.send_gcode(f"G00 Z{originZ} F{fastFeed}")
         up = True
     # Return to origin (0, 0) when done, then end program with M2
-    controller.send_gcode(f"G00 Z{originZ} F{fastFeed}")
-    controller.send_gcode(f"G00 X{originX} Y{originY} F{fastFeed}")
-    controller.send_gcode("M2210 F800 T500")
+    # controller.send_gcode(f"G00 Z{originZ} F{fastFeed}")
+    # controller.send_gcode(f"G00 X{originX} Y{originY} F{fastFeed}")
+    controller.send_gcode("M2019") # release
+    frequency = 800
+    if stop_drawing:
+        frequency = 400
+    controller.send_gcode(f"M2210 F{frequency} T500")
+    stop_drawing = False
+    is_drawing = False
 
 
 def readFromDXF(DXFtxt, size=50.0):
@@ -90,6 +149,7 @@ def readFromDXF(DXFtxt, size=50.0):
 
     lineOldX = None
     lineOldY = None
+    x = None
 
     # While there is still more to read
     while line < len(DXFtxt):
@@ -155,15 +215,6 @@ def readFromDXF(DXFtxt, size=50.0):
 
 
 def scale(path, custom_size):
-    '''
-    DXF files have the coordinates prewritten into it, which means they may
-    be the wrong dimension. Scale the coordinates read from the DXF to IMDIM.
-
-    Arguments:
-        path is of type list. Contains sublists of tuples, where each tuple is
-                              an (x, y) coordinate.
-    '''
-
     # Create lists of only x coordinates and only y coordinates
     x = []
     y = []
@@ -192,6 +243,29 @@ def scale(path, custom_size):
             path[i][j][0] *= scale
             path[i][j][1] *= scale
 
+
+def serial_ports():
+    if sys.platform.startswith('win'):
+        ports = ['COM%s' % (i + 1) for i in range(256)]
+    elif sys.platform.startswith('linux') or sys.platform.startswith('cygwin'):
+        # this excludes your current terminal "/dev/tty"
+        ports = glob.glob('/dev/tty[A-Za-z]*')
+    elif sys.platform.startswith('darwin'):
+        ports = glob.glob('/dev/tty.*')
+    else:
+        raise EnvironmentError('Unsupported platform')
+
+    result = []
+    for port in ports:
+        try:
+            # s = serial.Serial(port)
+            # s.close()
+            result.append(port)
+        except (OSError, serial.SerialException):
+            pass
+    return result
+
+
 app = Flask(__name__)
 
 
@@ -205,8 +279,12 @@ def index():
     return render_template('index.html')
 
 
-@app.route('/upload', methods=['POST'])
+@app.route('/api/upload', methods=['POST'])
 def upload_file():
+    if controller is None:
+        return "Please select proper Serial Port", 400
+    if is_drawing:
+        return "Arm is already drawing", 400
     if 'file' not in request.files:
         return "No file part", 400
 
@@ -219,26 +297,55 @@ def upload_file():
         # process the file
         lines = file.stream.readlines()
         if len(lines) <= 0:
-            return "lines < 1"
+            return "lines < 1", 400
         lines = [line.decode('utf-8').strip() + "\n" for line in lines]
         paths = readFromDXF(lines, size)
-        sendToSerial(paths, originX=200, originY=0, originZ=20, fastFeed=500, slowFeed=100)
-        return redirect("/?m=File printed!")
+        thread = Thread(target=sendToSerial, args=(paths, 500, 300))
+        thread.start()
+        return "Print started", 200
     else:
         return "Invalid file type. Only DXF files are allowed.", 400
 
 
-@app.route('/command', methods=['POST'])
-def send_command():
-    cmd = request.form.get("command")
-    for line in cmd.split("\n"):
-        controller.send_gcode(line)
-    return redirect("/")
+@app.route("/api/getstatus")
+def get_status():
+    obj = {
+        "percentage": str(round(drawing_status * 100, 2)),
+        "time": str(drawing_status_time_left)
+    }
+    return json.dumps(obj)
+
+
+@app.route("/api/setport", methods=['POST'])
+def set_com():
+    global controller
+    if controller is not None:
+        controller.close()
+    p = request.json["port"]
+    if p == "" or p is None:
+        return "Disconnected!", 200
+    try:
+        controller = RobotController(port=p)
+        controller.send_gcode("M2019")
+        return "Connected!", 200
+    except Exception:
+        return "Connection error", 400
+
+
+@app.route("/api/getports")
+def get_coms():
+    return json.dumps(serial_ports()), 200
+
+
+@app.route('/api/stopdrawing')
+def stop_drawing_file():
+    global is_drawing
+    global stop_drawing
+    if (not is_drawing) or stop_drawing:
+        return "Not drawing", 400
+    stop_drawing = True
+    return "Stopped drawing", 200
 
 
 if __name__ == '__main__':
-    # lines = initDXF(get_file_path("./peveko.dxf"))
-    # paths = readFromDXF(lines)
-    # sendToSerial(paths, originX=150, originY=50, originZ=3, writingZ=1, fastFeed=500, slowFeed=100)
-    app.run(debug=True, host="0.0.0.0")
-    # controller.home()
+    app.run(debug=False, host="0.0.0.0")

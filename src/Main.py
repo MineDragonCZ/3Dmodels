@@ -33,7 +33,14 @@ stop_drawing: bool = False
 is_drawing: bool = False
 drawing_status: float = 0
 drawing_status_time_left: str = ""
-drawing_start: datetime|None = None
+drawing_start: datetime | None = None
+
+drawing_speed: int = 0
+drawing_points_total: int = 0
+drawing_points_done: int = 0
+drawing_points_lost: int = 0
+drawing_size: str = "File not uploaded!"
+writing_origin = []
 
 
 def estimate_time_to_finish():
@@ -56,7 +63,25 @@ def estimate_time_to_finish():
     return estimated_remaining_time
 
 
-def sendToSerial(shapes, fastFeed=100, slowFeed=10):
+def calculate_arm_speed():
+    global drawing_start
+    global drawing_points_done
+    if drawing_start is None:
+        return 0
+
+    # Calculate elapsed time
+    current_time = datetime.now()
+    elapsed_time = current_time - drawing_start
+
+    if elapsed_time.total_seconds() <= 0:
+        return 0
+
+    pps = drawing_points_done / elapsed_time.total_seconds()
+
+    return int(pps)
+
+
+def sendToSerial(outline, shapes, fastFeed=100, slowFeed=10):
     if controller is None:
         return
     global stop_drawing
@@ -64,6 +89,10 @@ def sendToSerial(shapes, fastFeed=100, slowFeed=10):
     global drawing_status
     global drawing_status_time_left
     global drawing_start
+    global writing_origin
+    global drawing_speed, drawing_points_total, drawing_points_done, drawing_points_lost
+    if is_drawing:
+        return
     is_drawing = True
     # G21: Units in millimetres
     # G90: Absolute distances
@@ -71,33 +100,59 @@ def sendToSerial(shapes, fastFeed=100, slowFeed=10):
     controller.send_gcode("G90")
 
     # controller.calibrate()
-
-    current_pos = controller.get_current_all()
-    originX = current_pos[0]
-    originY = current_pos[1]
-    writingZ = current_pos[2]
+    originX = writing_origin[0]
+    originY = writing_origin[1]
+    writingZ = writing_origin[2]
     controller.writing_z = writingZ
 
     controller.send_gcode(f"M17")
     controller.send_gcode(f"G01 X{originX} Y{originY} Z{writingZ + 30} F{slowFeed}")
+    if stop_drawing:
+        stop_drawing = False
+        return
+
+    if outline:
+        if len(shapes) < 4:
+            stop_drawing = False
+            is_drawing = False
+            return
+        minX = shapes[0]
+        minY = shapes[1]
+        maxX = shapes[2]
+        maxY = shapes[3]
+        controller.pen_up()
+        if stop_drawing:
+            stop_drawing = False
+            return
+        controller.send_gcode(f"G01 X{originX + minX + maxX} Y{originY + minY} F{slowFeed}")
+        if stop_drawing:
+            stop_drawing = False
+            return
+        controller.send_gcode(f"G01 X{originX + minX + maxX} Y{originY + minY + maxY} F{slowFeed}")
+        if stop_drawing:
+            stop_drawing = False
+            return
+        controller.send_gcode(f"G01 X{originX + minX} Y{originY + minY + maxY} F{slowFeed}")
+        if stop_drawing:
+            stop_drawing = False
+            return
+        controller.send_gcode(f"G01 X{originX + minX} Y{originY + minY} F{slowFeed}")
+
+        # controller.send_gcode(f"G00 Z{writingZ + 30} F{fastFeed}")
+        stop_drawing = False
+        is_drawing = False
+        return
 
     up = True
-
-    total_points = 0
-    for shape in shapes:
-        for i in range(len(shape)):
-            total_points += 1
-    if total_points == 0:
-        total_points = 1
     drawing_start = datetime.now()
 
-    current_point = 0
+    drawing_points_done = 0
     for shape in shapes:
         if stop_drawing:
             controller.pen_up()
             break
         for i in range(len(shape)):
-            current_point += 1
+            drawing_points_done += 1
             if stop_drawing:
                 controller.pen_up()
                 break
@@ -109,8 +164,9 @@ def sendToSerial(shapes, fastFeed=100, slowFeed=10):
 
             # Write coordinate to file
             controller.send_gcode(f"G01 X{xstr} Y{ystr} F{slowFeed}")
-            drawing_status = current_point / total_points
+            drawing_status = drawing_points_done / drawing_points_total
             drawing_status_time_left = estimate_time_to_finish()
+            drawing_speed = calculate_arm_speed()
 
             # When arrived at point of new shape, start cutting
             if up:
@@ -122,12 +178,13 @@ def sendToSerial(shapes, fastFeed=100, slowFeed=10):
         # controller.send_gcode(f"G00 Z{originZ} F{fastFeed}")
         up = True
     # Return to origin (0, 0) when done, then end program with M2
+    controller.pen_up()
     # controller.send_gcode(f"G00 Z{originZ} F{fastFeed}")
-    # controller.send_gcode(f"G00 X{originX} Y{originY} F{fastFeed}")
-    controller.send_gcode("M2019") # release
+    controller.send_gcode(f"G00 X{originX} Y{originY} F{fastFeed}")
+    # controller.send_gcode("M2019") # release
     frequency = 800
     if stop_drawing:
-        frequency = 400
+        frequency = 1000
     controller.send_gcode(f"M2210 F{frequency} T500")
     stop_drawing = False
     is_drawing = False
@@ -141,6 +198,11 @@ def readFromDXF(DXFtxt, size=50.0):
     path = []
     xold = []
     yold = []
+
+    xFirst: float = None
+    yFirst: float = None
+    isFirstVertex = False
+    loopPolyline = False
 
     line = 0
     polyline = 0
@@ -157,12 +219,20 @@ def readFromDXF(DXFtxt, size=50.0):
         if DXFtxt[line] == "POLYLINE\n":
             segment += 1
             polyline = 1
+            isFirstVertex = True
             path.append([])
         elif DXFtxt[line] == "LINE\n":
             is_line = 1
 
         elif DXFtxt[line] == "VERTEX\n":
             vertex = 1
+
+        elif polyline == 1 and vertex != 1 and isFirstVertex and DXFtxt[line].strip() == "70":
+            loopPolyline = True
+
+        elif loopPolyline and polyline == 1 and DXFtxt[line] == "SEQEND\n" and yFirst is not None and xFirst is not None:
+            path[segment].append([float(xFirst), float(yFirst)])
+            loopPolyline = False
 
         elif is_line == 1:
             if DXFtxt[line].strip() == "10":
@@ -192,10 +262,15 @@ def readFromDXF(DXFtxt, size=50.0):
         elif (DXFtxt[line].strip() == "10") & ((vertex == 1) & (polyline == 1)):
             line += 1
             x = float(DXFtxt[line])
+            if isFirstVertex:
+                xFirst = x
 
         elif (DXFtxt[line].strip() == "20") & ((vertex == 1) & (polyline == 1)):
             line += 1
             y = float(DXFtxt[line])
+            if isFirstVertex:
+                isFirstVertex = False
+                yFirst = y
 
             if (x != xold) | (y != yold):
                 path[segment].append([float(x), float(y)])
@@ -209,12 +284,13 @@ def readFromDXF(DXFtxt, size=50.0):
         line += 1
 
     # Rescale the coordinates to imdim x imdim
-    scale(path, size)
+    maxPos = scale(path, size)
 
-    return path
+    return [maxPos, path]
 
 
 def scale(path, custom_size):
+    global drawing_size
     # Create lists of only x coordinates and only y coordinates
     x = []
     y = []
@@ -242,6 +318,8 @@ def scale(path, custom_size):
         for j in range(len(path[i])):
             path[i][j][0] *= scale
             path[i][j][1] *= scale
+    drawing_size = f"{maxx * scale}x{maxy * scale} mm"
+    return [minx * scale, miny * scale, maxx * scale, maxy * scale]
 
 
 def serial_ports():
@@ -281,17 +359,25 @@ def index():
 
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
+    outline = False
     if controller is None:
         return "Please select proper Serial Port", 400
     if is_drawing:
         return "Arm is already drawing", 400
+    if len(writing_origin) < 3:
+        return "Origin is not set", 400
     if 'file' not in request.files:
         return "No file part", 400
+
+    if request.form.get('outline'):
+        outline = True
 
     file = request.files['file']
     size = float(request.form.get("size"))
     if file.filename == '':
         return "No selected file", 400
+
+    global drawing_points_total
 
     if file and allowed_file(file.filename):
         # process the file
@@ -300,7 +386,19 @@ def upload_file():
             return "lines < 1", 400
         lines = [line.decode('utf-8').strip() + "\n" for line in lines]
         paths = readFromDXF(lines, size)
-        thread = Thread(target=sendToSerial, args=(paths, 500, 300))
+
+        drawing_points_total = 0
+        for shape in paths[1]:
+            for i in range(len(shape)):
+                drawing_points_total += 1
+        if drawing_points_total == 0:
+            drawing_points_total = 1
+
+        if outline:
+            thread = Thread(target=sendToSerial, args=(True, paths[0], 100, 10))
+            thread.start()
+            return "Doing outline...", 200
+        thread = Thread(target=sendToSerial, args=(False, paths[1], 500, 20))
         thread.start()
         return "Print started", 200
     else:
@@ -311,9 +409,46 @@ def upload_file():
 def get_status():
     obj = {
         "percentage": str(round(drawing_status * 100, 2)),
-        "time": str(drawing_status_time_left)
+        "time": str(drawing_status_time_left),
+        "speed": str(drawing_speed),
+        "points_lost": str(drawing_points_lost),
+        "points_total": str(drawing_points_total),
+        "points_done": str(drawing_points_done),
+        "size": str(drawing_size),
+        "origin": ("Not set!" if len(
+            writing_origin) < 3 else f"X{writing_origin[0]} Y{writing_origin[1]} Z{writing_origin[2]}"),
     }
     return json.dumps(obj)
+
+
+@app.route("/api/setorigin")
+def set_writing_origin():
+    global controller
+    if controller is None:
+        return "Controller is not connected", 400
+    if is_drawing:
+        return "Arm is drawing", 400
+    global writing_origin
+    writing_origin = controller.get_current_pos()
+    return "Origin set successfully", 200
+
+
+@app.route("/api/servos/lock")
+def servos_lock():
+    global controller
+    if controller is None:
+        return "Controller is not connected", 400
+    controller.send_gcode("M17")
+    return "Servos are locked now", 200
+
+
+@app.route("/api/servos/unlock")
+def servos_unlock():
+    global controller
+    if controller is None:
+        return "Controller is not connected", 400
+    controller.send_gcode("M2019")
+    return "Servos are unlocked now", 200
 
 
 @app.route("/api/setport", methods=['POST'])
@@ -326,7 +461,6 @@ def set_com():
         return "Disconnected!", 200
     try:
         controller = RobotController(port=p)
-        controller.send_gcode("M2019")
         return "Connected!", 200
     except Exception:
         return "Connection error", 400
@@ -343,7 +477,10 @@ def stop_drawing_file():
     global stop_drawing
     if (not is_drawing) or stop_drawing:
         return "Not drawing", 400
+    if controller is not None:
+        controller.halt = True
     stop_drawing = True
+    is_drawing = False
     return "Stopped drawing", 200
 
 

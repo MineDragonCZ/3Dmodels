@@ -4,6 +4,7 @@ import time
 
 class RobotController:
     writing_z = 0.0
+    halt = False
     def __init__(self, port, baudrate=115200, timeout=1):
         """
         Initializes the RobotController with a serial connection.
@@ -43,9 +44,13 @@ class RobotController:
                 break
             elif response:
                 print(f"Received error: {response}")
+                # return [response, 400]
             time.sleep(0.1)
+            if self.halt:
+                self.halt = False
+                return ["Halted", 200]
         print(f"Received: {response}")
-        return response
+        return [response, 200]
 
     def read_response(self):
         """
@@ -94,30 +99,15 @@ class RobotController:
             print("Serial connection closed.")
 
     def set_writing_z(self):
-        response = self.send_gcode("P2220").strip()
+        response = self.send_gcode("P2220")[0].strip()
         parts = response.split("Z")
         if len(parts) < 2:
             return False
         self.writing_z = float(parts[1]) - 0.1
         return True
 
-    def get_current_z(self):
-        response = self.send_gcode("P2220").strip()
-        parts = response.split("Z")
-        return float(parts[1])
-
-    def get_current_y(self):
-        response = self.send_gcode("P2220").strip()
-        parts = response.split("Y")
-        return float(parts[1].split(" ")[0])
-
-    def get_current_x(self):
-        response = self.send_gcode("P2220").strip()
-        parts = response.split("X")
-        return float(parts[1].split(" ")[0])
-
-    def get_current_all(self):
-        response = self.send_gcode("P2220").strip()
+    def get_current_pos(self):
+        response = self.send_gcode("P2220")[0].strip()
         partsX = response.split("X")
         partsY = response.split("Y")
         partsZ = response.split("Z")

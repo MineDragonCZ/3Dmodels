@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -10,6 +11,7 @@
     <link href="https://cdn.jsdelivr.net/npm/@sweetalert2/theme-dark@4/dark.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 </head>
+
 <body data-bs-theme="dark">
 
     <div class="container">
@@ -22,27 +24,38 @@
                     <div class="col-6">
                         <div class="card p-3 mb-4">
                             <div class="card-body">
-                                <div class="card-title"><h2>Port setup</h2></div>
+                                <div class="card-title">
+                                    <h2>Port setup</h2>
+                                </div>
+                                <hr>
                                 <div class="card-text">
                                     Port:
                                     <select id="comSelect" onchange="setCom();" class="form-select">
                                         <option value="">Select...</option>
                                     </select>
                                     Port status:
-                                    <div id="portStatus">Disconnected!</div>
+                                    <span id="portStatus">Disconnected!</span>
                                 </div>
                             </div>
                         </div>
                         <div class="card p-3">
                             <div class="card-body">
-                                <div class="card-title"><h2>File drawing</h2></div>
+                                <div class="card-title">
+                                    <h2>File drawing</h2>
+                                </div>
+                                <hr>
                                 <div class="card-text text-center">
-                                    <form onsubmit="uploadFile(); return false;" id="fileForm">
+                                    <form onsubmit="return false;" id="fileForm">
                                         <input type="file" name="file" class="form-control mb-2">
-                                        <input type="number" min="20" max="200" step="1" name="size" class="form-control mb-2" placeholder="Size (mm)">
-                                        <button type="submit" class="btn btn-secondary">Outline drawing</button>
-                                        <button type="submit" class="btn btn-primary">Start drawing</button>
+                                        <input type="number" min="20" max="200" step="1" name="size"
+                                            class="form-control mb-2" placeholder="Size (mm)">
+                                        <div class="form-check form-switch text-start">
+                                            <input class="form-check-input" name="outline" type="checkbox" role="switch">
+                                            Show size (outline drawing)
+                                        </div>
                                     </form>
+                                    <div class="btn btn-success" onclick="uploadFile();">Start drawing</div>
+                                    <div class="btn btn-danger" onclick="stopDrawing();">Stop drawing</div>
                                 </div>
                             </div>
                         </div>
@@ -50,13 +63,29 @@
                     <div class="col-6">
                         <div class="card p-3 h-100">
                             <div class="card-body">
-                                <div class="card-title"><h2>uArm status</h2></div>
-                                <div class="card-text text-center">
-                                    Progress: <span id="progress">0%</span>
-                                    <div class="bg-secondary"><div id="progressBar" class="bg-info"></div></div>
+                                <div class="card-title">
+                                    <h2>uArm status</h2>
                                 </div>
-                                <div class="text-center mt-3">
-                                    <div class="btn btn-danger" onclick="stopDrawing();">Stop drawing</div>
+                                <hr>
+                                <div class="card-text text-center">
+                                    Progress: <span id="stats_progress">0%</span>
+                                    <div class="bg-secondary">
+                                        <div id="stats_progressBar" class="bg-info"></div>
+                                    </div>
+                                    <div class="text-start">
+                                        Total points: <span id="stats_points">File not uploaded!</span><br/>
+                                        Points done: <span id="stats_pointsDone">0</span><br/>
+                                        Speed: <span id="stats_armSpeed">0</span> pps<br/>
+                                        Points lost: <span id="stats_pointsLost">0</span> pps<br/>
+                                        Drawing size: <span id="stats_size">File not uploaded!</span><br/>
+                                    </div>
+                                    <hr>
+                                    <div class="text-start">
+                                        Origin: <span id="stats_origin">Not set!</span><br/><br/>
+                                        <div class="btn btn-success" onclick="setOrigin()">Set origin</div>
+                                        <div class="btn btn-warning" onclick="lockServos(true)">Lock motors</div>
+                                        <div class="btn btn-danger" onclick="lockServos(false)">Unlock motors</div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -66,8 +95,8 @@
         </div>
     </div>
     <style>
-        #progressBar {
-            height: 5px;
+        #stats_progressBar {
+            height: 10px;
             width: 0px;
         }
     </style>
@@ -76,25 +105,31 @@
     <script>
         const endpoint = "/api/";
 
-        async function uploadFile(){
+        async function uploadFile() {
             var r = await fetch(endpoint + "upload", {
                 method: "POST",
                 body: new FormData(document.getElementById("fileForm"))
             });
             var response = await r.text();
-            if(r.status == 200){
+            if (r.status == 200) {
                 alertSuccess("Drawing started...", "Your drawing is under construction :)");
                 return;
             }
             alertError("Error!", response);
         }
-        async function getStatus(){
+        async function getStatus() {
             var r = await fetch(endpoint + "getstatus");
             var value = await r.json();
-            $("#progress").html(value["percentage"] + "% (" + value["time"] + ")");
-            $("#progressBar").width(parseFloat(value["percentage"]) + "%");
+            $("#stats_progress").html(value["percentage"] + "% (" + value["time"] + ")");
+            $("#stats_progressBar").width(parseFloat(value["percentage"]) + "%");
+            $("#stats_armSpeed").html(value["speed"]);
+            $("#stats_pointsLost").html(value["points_lost"]);
+            $("#stats_points").html(value["points_total"]);
+            $("#stats_pointsDone").html(value["points_done"]);
+            $("#stats_origin").html(value["origin"]);
+            $("#stats_size").html(value["size"]);
         }
-        async function setCom(){
+        async function setCom() {
             var value = $("#comSelect").val();
             $("#portStatus").html("Connecting...");
             var r = await fetch(endpoint + "setport", {
@@ -109,19 +144,37 @@
             var response = await r.text();
             $("#portStatus").html(response);
         }
-        async function getComs(){
+        async function getComs() {
             var r = await fetch(endpoint + "getports");
             var json = await r.json();
-            for(let i = 0; i < json.length; i++){
+            for (let i = 0; i < json.length; i++) {
                 var element = json[i];
                 $("#comSelect").html($("#comSelect").html() + `<option value="${element}">${element}</option>`);
             };
         }
-        async function stopDrawing(){
+        async function stopDrawing() {
             var r = await fetch(endpoint + "stopdrawing");
             var response = await r.text();
-            if(r.status == 200){
+            if (r.status == 200) {
                 alertSuccess("Drawing stopped!", "");
+                return;
+            }
+            alertError("Error!", response);
+        }
+        async function setOrigin() {
+            var r = await fetch(endpoint + "setorigin");
+            var response = await r.text();
+            if (r.status == 200) {
+                alertSuccess("Origin set!", "");
+                return;
+            }
+            alertError("Error!", response);
+        }
+        async function lockServos(lock) {
+            var r = await fetch(endpoint + "servos/" + (lock ? "lock" : "unlock"));
+            var response = await r.text();
+            if (r.status == 200) {
+                alertSuccess(response, "");
                 return;
             }
             alertError("Error!", response);
@@ -131,7 +184,7 @@
         getComs();
         setInterval(getStatus, 1000);
 
-        function alertSuccess(t, mess){
+        function alertSuccess(t, mess) {
             Swal.fire({
                 title: t,
                 text: mess,
@@ -140,7 +193,7 @@
             });
         }
 
-        function alertError(t, mess){
+        function alertError(t, mess) {
             Swal.fire({
                 title: t,
                 text: mess,
@@ -150,4 +203,5 @@
         }
     </script>
 </body>
+
 </html>
